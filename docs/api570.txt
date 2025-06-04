@@ -1,0 +1,6 @@
+API 570 - Piping Inspection Code:
+This code deals with the inspection, rating, repair, and alteration procedures for metallic piping systems. It includes:
+- Inspection types: visual, ultrasonic, radiographic
+- Corrosion rate calculation and remaining life
+- Risk-based inspection (RBI) methodologies
+- Pressure testing and documentation requirements

@@ -1,0 +1,6 @@
+Material Properties Table:
+1. Carbon Steel: High strength, affordable, moderate corrosion resistance
+2. Stainless Steel: Excellent corrosion resistance, more expensive
+3. Inconel: High-temp strength, oxidation resistant
+4. Copper: Excellent thermal/electrical conductivity, corrosion prone in acid
+5. Titanium: Lightweight, strong, corrosion resistant, expensive

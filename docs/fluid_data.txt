@@ -1,0 +1,6 @@
+Fluid Property Table:
+1. Water: Density = 1000 kg/m³, Boiling Point = 100°C
+2. Steam: Density = 0.6 kg/m³, High Energy Content
+3. Oil: Viscous, Incompressible, Lubricant
+4. Nitrogen: Inert, Gas at Room Temperature, Used for Blanketing
+5. Ammonia: Toxic, Sharp Smell, Used in Refrigeration

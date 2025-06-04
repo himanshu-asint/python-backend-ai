@@ -1,0 +1,6 @@
+Failure Mode Library:
+1. Component: Heat Exchanger | Failure: Tube Leak | Cause: Corrosion | Detection: Pressure Drop | Prevention: Coating
+2. Component: Pump | Failure: Seal Failure | Cause: Wear | Detection: Vibration | Prevention: Periodic Maintenance
+3. Component: Pipe | Failure: Crack | Cause: Thermal Stress | Detection: Ultrasonic Testing | Prevention: Stress Relieving
+4. Component: Valve | Failure: Jamming | Cause: Debris | Detection: Manual Check | Prevention: Filtration
+5. Component: Tank | Failure: Bulging | Cause: Overpressure | Detection: Visual | Prevention: Relief Valves

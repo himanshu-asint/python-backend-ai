@@ -1,0 +1,6 @@
+API 581 - Risk-Based Inspection (RBI):
+API 581 provides a quantitative approach to assess risk by combining the probability of failure (POF) and the consequence of failure (COF). Core concepts:
+- RBI methodology to optimize inspection resources
+- POF influenced by corrosion, fatigue, and design
+- COF depends on release impact, flammability, toxicity
+- RBI planning and risk ranking system
