@@ -1,56 +1,51 @@
-from fastapi import FastAPI, Request
+# main.py
+from fastapi import FastAPI
 from pydantic import BaseModel
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.llms import HuggingFacePipeline
 from langchain.chains import RetrievalQA
-from transformers import T5Tokenizer, T5ForConditionalGeneration, pipeline
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.llms import Ollama  # Local LLM
 
 class Question(BaseModel):
     question: str
 
 app = FastAPI()
 
-# Load FAISS index and retriever
-embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-vectorstore = FAISS.load_local("faiss_index", embedding, allow_dangerous_deserialization=True)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
+# Load local embeddings and FAISS index
+embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+vectorstore = FAISS.load_local("faiss_index", embedding_model, allow_dangerous_deserialization=True)
 
-# Load Flan-T5 model
-model_name = "google/flan-t5-base"
-tokenizer = T5Tokenizer.from_pretrained(model_name)
-model = T5ForConditionalGeneration.from_pretrained(model_name)
+# Local LLM via Ollama (adjust model name as per your setup)
+llm = Ollama(model="mistral", num_predict=128)  # or use "llama2", "llama3", etc.
 
-pipe = pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_new_tokens=200)
-llm = HuggingFacePipeline(pipeline=pipe)
+retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 2})
 
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
     retriever=retriever,
-    chain_type="stuff",
     return_source_documents=True
 )
 
 @app.post("/ask-ai")
-async def ask_ai(q: Question):
-    # Use similarity_search_with_score to get docs and scores
-    results = vectorstore.similarity_search_with_score(q.question, k=10)
+async def ask_ai(question: Question):
+    # Get docs and scores
+    results = vectorstore.similarity_search_with_score(question.question, k=3)
     if not results:
         return {"answer": "Please ask questions related to the documents provided."}
     top_doc, score = results[0]
     source = top_doc.metadata.get('source', '')
     print(f"Top doc source: {source}, score: {score}")
-    # Always allow greeting if greet.txt is top doc
-    if source.endswith('greet.txt'):
-        response = qa_chain.invoke({"query": q.question})
-        return {"answer": response['result']}
-    # Only answer if top doc is from allowed sources and score is LOW enough (distance)
     allowed_sources = [
         'materials_table.txt', 'fluid_data.txt', 'failure_library.txt',
-        'api581.txt', 'api570.txt', 'api510.txt'
+        'api581.txt', 'api570.txt', 'api510.txt', 'greet.txt'
     ]
-    if any(source.endswith(s) for s in allowed_sources) and score <= 2.0:
-        response = qa_chain.invoke({"query": q.question})
-        return {"answer": response['result']}
-    # Otherwise, fallback
-    return {"answer": "Please ask questions related to the documents provided."}
+    if not any(source.endswith(s) for s in allowed_sources) or score > 1.5:
+        return {"answer": "Please ask questions related to the documents provided."}
+    # Otherwise, let the LLM answer
+    result = qa_chain({"query": question.question})
+    if not result["result"].strip():
+        return {"answer": "I couldn't find a relevant answer in the documents."}
+    return {
+        "answer": result["result"],
+        "sources": [doc.metadata["source"] for doc in result["source_documents"]]
+    }
