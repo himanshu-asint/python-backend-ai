@@ -5,3 +5,6 @@ faiss-cpu
 transformers
 torch
 sentence-transformers
+langchain-community
+sentence-transformers
+sentencepiece

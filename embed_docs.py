@@ -1,22 +1,22 @@
 import os
 from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
-# Load and split all .txt files in docs/
-docs = []
+# Load documents
+docs_path = "docs"
+all_docs = []
+for file in os.listdir(docs_path):
+    if file.endswith(".txt"):
+        loader = TextLoader(os.path.join(docs_path, file))
+        all_docs.extend(loader.load())
 
-for file_name in os.listdir("./docs"):
-    if file_name.endswith(".txt"):
-        loader = TextLoader(f"./docs/{file_name}")
-        text = loader.load()
-        splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-        docs += splitter.split_documents(text)
+# Split into chunks
+splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+chunks = splitter.split_documents(all_docs)
 
-# Create embeddings using a specific model
-embedding = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-# Create FAISS index
-db = FAISS.from_documents(docs, embedding)
-db.save_local("faiss_index")
+# Embed and store with FAISS
+embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+vectorstore = FAISS.from_documents(chunks, embedding)
+vectorstore.save_local("faiss_index")
