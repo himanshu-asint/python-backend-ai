@@ -1,6 +1,0 @@
-API 510 - Pressure Vessel Inspection Code:
-This standard covers the in-service inspection, repair, alteration, and rerating activities for pressure vessels and pressure-relieving devices. It applies to vessels used in the petroleum and chemical industries. Key areas include:
-- Inspection intervals based on risk
-- Repair procedures and documentation
-- Fitness-for-service assessments
-- Welding and NDE (Non-Destructive Examination)

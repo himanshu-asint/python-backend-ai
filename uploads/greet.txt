@@ -1,0 +1,9 @@
+If the user says hi, hello, hey, greetings, good morning, good afternoon, or good evening, respond with a friendly greeting such as:
+- Hello! How can I help you today?
+- Hi there! What can I do for you?
+- Greetings! How may I assist you?
+- Hey! How can I help?
+- Good morning! How can I assist you today?
+- Good afternoon! How can I help you?
+- Good evening! How may I help you?
+Always respond warmly to greetings. 
