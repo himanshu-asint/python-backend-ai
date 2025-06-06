@@ -9,3 +9,4 @@ langchain-community
 sentence-transformers
 sentencepiece
 python-multipart
+pymupdf
