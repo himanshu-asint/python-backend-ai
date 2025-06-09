@@ -10,3 +10,6 @@ sentence-transformers
 sentencepiece
 python-multipart
 pymupdf
+ultralytics
+Pillow
+requests

@@ -1,281 +1,170 @@
 # main.py
-from fastapi import FastAPI, UploadFile, File, Body
-from pydantic import BaseModel
-from langchain.chains import RetrievalQA
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.llms import Ollama  # Local LLM
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import TextLoader, PyMuPDFLoader # Import PyMuPDFLoader
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageDraw
+from io import BytesIO
 import os
-from typing import List
-import shutil
+import base64
+import numpy as np
+import uuid
+import random
+import sys
+import torch
+from mobile_sam import sam_model_registry, SamPredictor
+from segment_anything import SamAutomaticMaskGenerator
 
-class Question(BaseModel):
-    question: str
+# Add the mobile_sam_repo directory to Python path
+sys.path.append(os.path.join(os.path.dirname(__file__), 'mobile_sam_repo'))
 
 app = FastAPI()
 
-# Load local embeddings and FAISS index
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-if os.path.exists("faiss_index") and os.path.exists(os.path.join("faiss_index", "index.faiss")):
-    vectorstore = FAISS.load_local("faiss_index", embedding_model, allow_dangerous_deserialization=True)
-else:
-    vectorstore = None  # No vectorstore yet
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
-# Local LLM via Ollama (adjust model name as per your setup)
-llm = Ollama(model="mistral", num_predict=128)  # or use "llama2", "llama3", etc.
-
-if vectorstore is not None:
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 2})
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=retriever,
-        return_source_documents=True
-    )
-else:
-    retriever = None
-    qa_chain = None
-
-# Create uploads directory if it doesn't exist
+# Create UPLOAD_DIR first, then mount static files
 UPLOAD_DIR = "uploads"
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-@app.post("/upload-docs") # Changed route
-async def upload_docs(files: List[UploadFile] = File(...)):
-    global vectorstore, retriever, qa_chain
-    processed_files = []
-    failed_files = {}
+# Mount static files directory
+app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
 
-    try:
-        # Process each uploaded file
-        for file in files:
-            file_path = os.path.join(UPLOAD_DIR, file.filename)
-            file_extension = os.path.splitext(file.filename)[1].lower()
-            
-            # Save the file temporarily
-            try:
-                with open(file_path, "wb") as buffer:
-                    content = await file.read()
-                    buffer.write(content)
-            except Exception as e:
-                failed_files[file.filename] = f"Failed to save file: {str(e)}"
-                continue # Skip to the next file
+# Initialize MobileSAM
+print("Initializing MobileSAM...")
+sam_checkpoint = "mobile_sam.pt"
 
-            # Load and process the file based on extension
-            documents = []
-            try:
-                if file_extension == ".txt":
-                    loader = TextLoader(file_path)
-                    documents = loader.load()
-                elif file_extension == ".pdf":
-                    loader = PyMuPDFLoader(file_path)
-                    documents = loader.load()
-                else:
-                    failed_files[file.filename] = "Unsupported file type. Only .txt and .pdf are supported."
-                    os.remove(file_path) # Clean up unsupported file
-                    continue # Skip to the next file
-            except Exception as e:
-                 failed_files[file.filename] = f"Failed to load/process file: {str(e)}"
-                 os.remove(file_path) # Clean up failed file
-                 continue # Skip to the next file
-            
-            # Split text into chunks
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-                length_function=len
-            )
-            chunks = text_splitter.split_documents(documents)
-            
-            # Add chunks to vector store
-            if vectorstore is None:
-                # Initialize vectorstore with the first batch of chunks
-                if chunks:
-                    vectorstore = FAISS.from_documents(chunks, embedding_model)
-                else:
-                    failed_files[file.filename] = "No content found in file after processing."
-                    os.remove(file_path) # Clean up empty file
-                    continue # Skip to the next file
-            else:
-                # Add to existing vectorstore
-                if chunks:
-                    vectorstore.add_documents(chunks)
-                else:
-                    failed_files[file.filename] = "No content found in file after processing."
-                    os.remove(file_path) # Clean up empty file
-                    continue # Skip to the next file
-
-            processed_files.append(file.filename)
-
-        # Save the updated vector store if it exists
-        if vectorstore is not None:
-            vectorstore.save_local("faiss_index")
-            # (Re)create retriever and qa_chain if vectorstore was just created or updated
-            retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 2})
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=llm,
-                retriever=retriever,
-                return_source_documents=True
-            )
-
-        return {
-            "status": "success",
-            "message": f"Successfully processed {len(processed_files)} files.",
-            "files_processed": processed_files,
-            "files_failed": failed_files
-        }
+try:
+    # Initialize the model using the proper MobileSAM architecture
+    sam = sam_model_registry["vit_t"](checkpoint=sam_checkpoint)
+    sam.to(device="cpu")
     
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"An unexpected error occurred during file processing: {str(e)}",
-            "files_processed": processed_files,
-            "files_failed": failed_files
-        }
+    # Initialize the mask generator
+    mask_generator = SamAutomaticMaskGenerator(
+        model=sam,
+        points_per_side=32,
+        pred_iou_thresh=0.86,
+        stability_score_thresh=0.92,
+        crop_n_layers=1,
+        crop_n_points_downscale_factor=2,
+        min_mask_region_area=100,
+    )
+    print("MobileSAM model loaded successfully.")
+except FileNotFoundError:
+    print(f"Error: MobileSAM checkpoint not found at {sam_checkpoint}. Please download it.")
+    mask_generator = None
+except Exception as e:
+    print(f"Error loading MobileSAM model: {e}")
+    import traceback
+    traceback.print_exc()  # This will print the full error traceback
+    mask_generator = None
 
-@app.post("/ask-ai")
-async def ask_ai(question: Question):
-    if vectorstore is None or qa_chain is None or len(vectorstore.docstore._dict) == 0:
-        return {"answer": "No documents available. Please upload and train with new documents."}
-    # Get docs and scores
-    results = vectorstore.similarity_search_with_score(question.question, k=3)
-    if (
-        not results or
-        len(results) == 0 or
-        not isinstance(results[0], (list, tuple)) or
-        len(results[0]) < 2
-    ):
-        return {"answer": "Please ask questions related to the documents provided."}
-    top_doc, score = results[0]
-    source = top_doc.metadata.get('source', '')
-    if score > 1.5:
-        return {"answer": "Please ask questions related to the documents provided."}
-    # Otherwise, let the LLM answer
-    result = qa_chain({"query": question.question})
-    if not result["result"].strip():
-        return {"answer": "I couldn't find a relevant answer in the documents."}
-    return {
-        "answer": result["result"]
-    }
+@app.post("/analyze-image")
+async def analyze_image(file: UploadFile = File(...)):
+    """
+    Analyze an image using MobileSAM for object segmentation.
+    Returns detected masks as bounding boxes, area, IOU, and a highlighted image URL.
+    """
+    print(f"Received image analysis request for file: {file.filename}")
+    
+    if mask_generator is None: # Check if model loaded successfully
+        raise HTTPException(status_code=503, detail="MobileSAM model not loaded. Check server logs for details.")
 
-@app.post("/sync-uploads")
-async def sync_uploads():
-    global vectorstore, retriever, qa_chain
     try:
-        existing_files = set(os.listdir(UPLOAD_DIR))
-        if vectorstore is None:
-            return {
-                "status": "success",
-                "removed_docs": 0,
-                "message": "No vectorstore to sync."
-            }
-        all_docs = vectorstore.docstore._dict
-        to_remove = []
-        for doc_id, doc in all_docs.items():
-            source = doc.metadata.get('source', '')
-            # Handle sources that might not have a base name
-            filename = os.path.basename(source) if source else None
-            # Only consider documents originating from files in the upload directory for removal
-            if filename and filename not in existing_files:
-                to_remove.append(doc_id)
-        for doc_id in to_remove:
-            vectorstore.docstore._dict.pop(doc_id, None)
-        remaining_docs = list(vectorstore.docstore._dict.values())
-        if remaining_docs:
-            # Rebuild the vectorstore from remaining documents
-            new_vectorstore = FAISS.from_documents(remaining_docs, embedding_model)
-            new_vectorstore.save_local("faiss_index")
-            vectorstore = new_vectorstore
-            # Recreate retriever and qa_chain
-            retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 2})
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=llm,
-                retriever=retriever,
-                return_source_documents=True
-            )
-        else:
-            # If no docs left, remove the index file if exists and set vectorstore/retriever/qa_chain to None
-            try:
-                shutil.rmtree("faiss_index")
-            except Exception:
-                pass
-            vectorstore = None
-            retriever = None
-            qa_chain = None
+        # Read and validate image
+        contents = await file.read()
+        try:
+            image = Image.open(BytesIO(contents))
+            print(f"Original image mode: {image.mode}, format: {image.format}")
+            # Ensure image is in RGB mode for consistent processing by SAM
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+                print(f"Image converted to RGB mode. New mode: {image.mode}")
+            image_np = np.array(image)
+        except Exception as e:
+            print(f"Error opening or converting image: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid image file or mode: {e}")
+        
+        # Ensure image_np is (H, W, 3) for SAM
+        if image_np.ndim == 2: # Grayscale
+            image_np = np.stack([image_np]*3, axis=-1)
+        elif image_np.shape[2] == 4: # RGBA
+            image_np = image_np[:, :, :3] # Take RGB channels only
+
+        # Save original image temporarily
+        original_temp_path = os.path.join(UPLOAD_DIR, f"original_{file.filename}")
+        image.save(original_temp_path)
+
+        # Generate masks using MobileSAM (everything mode)
+        print("Running MobileSAM segmentation")
+        masks = mask_generator.generate(image_np)
+        print(f"Generated {len(masks)} masks.")
+        
+        # Prepare image for drawing masks
+        draw_image = image.copy() # This is the RGB image
+        # Convert draw_image to RGBA to properly composite transparent masks
+        if draw_image.mode != 'RGBA':
+            draw_image = draw_image.convert('RGBA')
+        
+        segmented_objects = []
+        
+        def get_random_color(alpha=100):
+            r = random.randint(0, 255)
+            g = random.randint(0, 255)
+            b = random.randint(0, 255)
+            return (r, g, b, alpha)
+
+        for mask_data in masks:
+            mask = mask_data['segmentation'] # This is a boolean numpy array (H, W)
+            bbox = mask_data['bbox'] # [x, y, width, height]
+            x, y, w, h = bbox
+            
+            # Create a colored overlay for the mask
+            color_fill = get_random_color()
+            colored_mask_np = np.zeros((*mask.shape, 4), dtype=np.uint8)
+            colored_mask_np[mask] = list(color_fill)
+            colored_mask_img = Image.fromarray(colored_mask_np)
+            
+            # Composite the colored mask onto the drawing image
+            draw_image.alpha_composite(colored_mask_img)
+
+            segmented_objects.append({
+                "bbox": [x, y, w, h],
+                "area": float(mask_data['area']),
+                "predicted_iou": float(mask_data['predicted_iou']),
+                "stability_score": float(mask_data['stability_score'])
+            })
+
+        # Save the masked image to the uploads directory
+        highlighted_filename = f"masked_{uuid.uuid4().hex}_{file.filename}"
+        masked_image_path = os.path.join(UPLOAD_DIR, highlighted_filename)
+        draw_image.save(masked_image_path)
+        
+        # Construct the URL for the masked image
+        masked_image_url = f"/static/{highlighted_filename}"
+        
+        # Clean up original temporary file
+        try:
+            os.remove(original_temp_path)
+        except Exception as e:
+            print(f"Error cleaning up original temporary file: {e}")
+
         return {
-            "status": "success",
-            "removed_docs": len(to_remove),
-            "message": f"Removed {len(to_remove)} documents whose source files are missing in uploads folder and rebuilt the index."
+            "num_objects_found": len(segmented_objects),
+            "segmented_objects": segmented_objects,
+            "masked_image_url": masked_image_url,
+            "message": "Image segmentation complete"
         }
+        
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Error during sync: {str(e)}"
-        }
+        print(f"Error in analyze_image: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/delete-uploaded-doc")
-async def delete_uploaded_doc(filename: str = Body(..., embed=True)):
-    global vectorstore, retriever, qa_chain
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            # Immediately trigger a sync and rebuild of the vectorstore
-            existing_files = set(os.listdir(UPLOAD_DIR))
-            if vectorstore is None:
-                 return {
-                    "status": "success",
-                    "message": f"Deleted {filename} (file only, no vectorstore to sync)",
-                    "removed_files": 1
-                }
-            all_docs = vectorstore.docstore._dict
-            to_remove = []
-            for doc_id, doc in all_docs.items():
-                source = doc.metadata.get('source', '')
-                # Handle sources that might not have a base name
-                fname = os.path.basename(source) if source else None
-                # Only consider documents originating from the deleted file for removal
-                if fname == filename:
-                     to_remove.append(doc_id)
-
-            for doc_id in to_remove:
-                vectorstore.docstore._dict.pop(doc_id, None)
-
-            remaining_docs = list(vectorstore.docstore._dict.values())
-            if remaining_docs:
-                new_vectorstore = FAISS.from_documents(remaining_docs, embedding_model)
-                new_vectorstore.save_local("faiss_index")
-                vectorstore = new_vectorstore
-                retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 2})
-                qa_chain = RetrievalQA.from_chain_type(
-                    llm=llm,
-                    retriever=retriever,
-                    return_source_documents=True
-                )
-            else:
-                try:
-                    shutil.rmtree("faiss_index")
-                except Exception:
-                    pass
-                vectorstore = None
-                retriever = None
-                qa_chain = None
-            return {
-                "status": "success",
-                "message": f"Deleted {filename} and synced vectorstore.",
-                "removed_files": 1
-            }
-        else:
-            return {
-                "status": "error",
-                "message": f"File {filename} does not exist in uploads.",
-                "removed_files": 0
-            }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Error deleting file: {str(e)}",
-            "removed_files": 0
-        }
+@app.get("/")
+async def read_root():
+    return {"message": "SAM Image Segmentation API is running"}
