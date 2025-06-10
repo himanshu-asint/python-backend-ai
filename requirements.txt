@@ -6,10 +6,12 @@ transformers
 torch
 sentence-transformers
 langchain-community
-sentence-transformers
 sentencepiece
 python-multipart
 pymupdf
 ultralytics
 Pillow
 requests
+numpy
+torchvision
+piq
