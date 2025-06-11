@@ -196,7 +196,7 @@ async def analyze_image(file: UploadFile = File(...), request: Request = Request
 
         # Define the text query for damage types
         # Use ". " to separate different categories
-        text_query = "burnt area . charred . melted . scorched . electrical damage . exposed wires . smoke damage . corrosion . crack . faulty component . circuit board . electronic component . power input . burned wires . damaged circuit board . heat damage . short circuit"
+        text_query = "burnt area . charred . melted . scorched . electrical damage . exposed wires . smoke damage . corrosion . crack . faulty component . circuit board . electronic component . power input . burned wires . damaged circuit board . heat damage . short circuit . corrosion . crack . faulty component . peeling paint . flaking rust . surface rust . leak . leaking pipe . water leak . perforation . pipe . damaged pipe . water stream . vapor . hole . rusty . heavily rusted . rust damage . deteriorated . worn . valve . pipeline . metal pipes . old pipe . industrial pipe . abandoned pipe . rusted metal . corrosion under insulation . CUI . rust under insulation . deterioration under insulation . insulation damage . pipe degradation . pitting . metal loss . wall thinning . heavy rust . pitted metal . scaling . blistering . deformed pipe . rusty pipe section . severe damage . structural damage"
         print(f"Running Grounding DINO detection with query: '{text_query}'")
 
         # Process image and text prompt
@@ -207,7 +207,7 @@ async def analyze_image(file: UploadFile = File(...), request: Request = Request
             outputs = model(**inputs)
 
         # Post-process outputs
-        results = processor.post_process_grounded_object_detection(outputs, threshold=0.34, target_sizes=[image.size[::-1]])[0] # Increased threshold to 0.3
+        results = processor.post_process_grounded_object_detection(outputs, threshold=0.05, target_sizes=[image.size[::-1]])[0] # Lowered threshold significantly for debugging
         print(f"Raw detection results: {results}") # Added for debugging
         
         detected_damage = []
